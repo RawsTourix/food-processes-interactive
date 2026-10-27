@@ -34,6 +34,8 @@
 - [Черновик требований](docs/SPEC-DRAFT.md)
 - [План работы с Codex](docs/CODEX-PLAN.md)
 - [Правила для Codex](AGENTS.md)
+- [Методический аудит оригинального Lab_FP](docs/research/Lab_FP_methodical_audit.md)
+- [Проект учебного сценария теплообменника](docs/design/heat-exchanger-learning-flow.md)
 
 **Ключевой принцип:** сначала проверяемая методика и headless-ядро, затем графический интерфейс.
 
