@@ -39,6 +39,7 @@
 - [Правила для Codex](AGENTS.md)
 - [Методический аудит оригинального Lab_FP](docs/research/Lab_FP_methodical_audit.md)
 - [Проект учебного сценария теплообменника](docs/design/heat-exchanger-learning-flow.md)
+- [Методическое взаимодействие и будущие тестовые сценарии](docs/design/methodical-interaction.md)
 - [Технический анализ оригинала](docs/research/Lab_FP_analysis.md)
 - [Рабочий процесс оригинала](docs/research/Lab_FP_workflow.md)
 - [Реестр формул и расхождений](docs/research/Lab_FP_calculations.md)
