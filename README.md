@@ -2,7 +2,7 @@
 
 Локальный интерактивный практикум по дисциплине «Процессы и аппараты пищевых производств» (ПиАПП).
 
-**Статус: проектирование / ТЗ 0.3.** Статический и методический аудит оригинального Flash-приложения выполнен в необходимом для проектирования объёме. Нет утверждённой физической модели виртуальных показаний, реализации лабораторных или готового EXE.
+**Статус: первый headless-срез Д1 / ТЗ 0.3.** Статический и методический аудит оригинального Flash-приложения выполнен в необходимом для проектирования объёме. Нет утверждённой физической модели виртуальных показаний, реализации лабораторных или готового EXE.
 
 ## Цель
 
@@ -29,10 +29,46 @@
 
 Не размещать в публичном репозитории оригинальный EXE, сторонние PDF или графические ресурсы без подтверждения прав.
 
+## Первый headless-срез: запуск
+
+Требуется Python 3.11. Из корня репозитория в PowerShell:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python -m pytest -q
+.\.venv\Scripts\python -m food_processes
+```
+
+CLI читает **JSON Lines**: одна строка запроса — одна строка ответа; сеансы остаются в памяти до завершения процесса. Пример работы с обоими модулями:
+
+```powershell
+@'
+{"api_version":"0.1","request_id":"1","op":"session.create","args":{"module_id":"heat-exchanger"}}
+{"api_version":"0.1","request_id":"2","op":"session.create","args":{"module_id":"humid-air"}}
+{"api_version":"0.1","request_id":"3","op":"session.command","args":{"session_id":"s2","expected_revision":0,"action":"select_region","params":{"point_id":"p1","region_id":"schematic-area-a"}}}
+{"api_version":"0.1","request_id":"4","op":"session.command","args":{"session_id":"s2","expected_revision":1,"action":"get_properties","params":{}}}
+'@ | .\.venv\Scripts\python -m food_processes
+```
+
+При проверке созданы сеансы `s1` и `s2`; выбор `p1` вернул `representation: "qualitative"`, ревизию 1 и ссылку на справку. Запрос физических свойств вернул `model.psychrometrics_unavailable`. Это не психрометрический расчёт. В теплообменнике доступна только открытая фикстура R04 с точным совпадением условий, а не расчёт или показания стенда. Полный пример, границы и результаты тестов — [отчёт Д1](docs/design/headless-d1.md).
+
+Из Python используется тот же диспетчер:
+
+```python
+from food_processes import Application
+app = Application()
+result = app.request({"api_version": "0.1", "request_id": "1", "op": "session.create", "args": {"module_id": "humid-air"}})
+print(result["data"]["session_id"])
+```
+
+`session.save` формирует документ, а `storage.write` записывает его; по умолчанию файлы сохраняются в каталоге пользователя вне проекта и EXE. Запрос принимает только простое имя вида `session.json`, а не путь. Для тестов доверенный вызывающий код может передать `Application(storage_dir=...)` или `--storage-dir`; это настройка запуска, не параметр недоверенного JSON-запроса. Экспорт отчётов и автоматическое сохранение пока не реализованы.
+
 ## Документация
 
 - [Техническое задание — черновик v0.3](docs/SPEC-DRAFT.md)
 - [Архитектура общего практикума](docs/design/application-architecture.md)
+- [Контракт API](docs/design/application-api-contract.md) и [реализация Д1](docs/design/headless-d1.md)
 - [Портфель лабораторных и интерактивностей](docs/design/laboratory-portfolio.md)
 - [Открытые решения и вопросы](docs/OPEN-QUESTIONS.md)
 - [План работы с Codex](docs/CODEX-PLAN.md)
