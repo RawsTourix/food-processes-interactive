@@ -7,7 +7,8 @@ from pathlib import Path
 import re
 import tempfile
 
-from .modules import Air, Heat, MATERIALS, MODULES, Problem, fail
+from .modules import Air, Heat, MATERIALS, MODULES, Problem, fail, fixture_matches
+from . import answers
 
 
 VERSION = "0.1"
@@ -31,16 +32,27 @@ def default_storage():
 def validate_document(doc):
     if not isinstance(doc, dict) or set(doc) != {"format", "format_version", "module_id", "module_version", "session_id", "revision", "module_data_version", "module_data"} or not finite_tree(doc):
         fail("document.invalid", "compatibility", "Формат документа повреждён.")
-    if doc["format"] != "food-processes-session" or type(doc["format_version"]) is not int or doc["format_version"] != 1 or doc["module_data_version"] != 1 or type(doc["module_data_version"]) is not int or doc["module_version"] != "0.1":
+    if doc["format"] != "food-processes-session" or type(doc["format_version"]) is not int or doc["format_version"] != 1 or type(doc["module_data_version"]) is not int or doc["module_data_version"] not in (1, 2) or doc["module_version"] != "0.1":
         fail("document.unsupported", "compatibility", "Версия документа не поддерживается.")
     if not isinstance(doc["module_id"], str) or doc["module_id"] not in MODULES or not isinstance(doc["session_id"], str) or not re.fullmatch(r"s[1-9][0-9]*", doc["session_id"]) or type(doc["revision"]) is not int or doc["revision"] < 0:
         fail("document.invalid", "compatibility", "Идентификатор модуля, сеанса или ревизия некорректны.")
+    doc = deepcopy(doc)
     data = doc["module_data"]
     if not isinstance(data, dict):
         fail("document.invalid", "compatibility", "Данные модуля повреждены.")
     try:
         if doc["module_id"] == "heat-exchanger":
-            if set(data) != {"conditions", "drafts", "snapshots"} or not isinstance(data["drafts"], dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in data["drafts"].items()) or not isinstance(data["snapshots"], list):
+            if doc["module_data_version"] == 1:
+                if set(data) != {"conditions", "drafts", "snapshots"} or not isinstance(data["snapshots"], list):
+                    raise ValueError()
+                data["conditions_version"] = 0
+                data["answers"] = []
+                for snap in data["snapshots"]:
+                    if not isinstance(snap, dict) or set(snap) != {"snapshot_id", "snapshot_version", "data_state", "origin", "conditions"}:
+                        raise ValueError()
+                    snap["conditions_version"] = -1
+                doc["module_data_version"] = 2
+            if set(data) != {"conditions", "drafts", "snapshots", "conditions_version", "answers"} or type(data["conditions_version"]) is not int or data["conditions_version"] < 0 or not isinstance(data["answers"], list) or not isinstance(data["drafts"], dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in data["drafts"].items()) or not isinstance(data["snapshots"], list):
                 raise ValueError()
             def check_conditions(c):
                 if not isinstance(c, dict) or set(c) != {"flow", "hot_in", "cold_in", "hot_capacity", "cold_capacity", "UA"}:
@@ -55,10 +67,13 @@ def validate_document(doc):
             if data["conditions"] is not None:
                 check_conditions(data["conditions"])
             for i, snap in enumerate(data["snapshots"], 1):
-                if set(snap) != {"snapshot_id", "snapshot_version", "data_state", "origin", "conditions"} or snap["snapshot_id"] != f"hx-s{i}" or type(snap["snapshot_version"]) is not int or snap["snapshot_version"] != 1 or snap["data_state"] != "frozen" or snap["origin"] != "user_entered":
+                if set(snap) != {"snapshot_id", "snapshot_version", "data_state", "origin", "conditions", "conditions_version"} or type(snap["conditions_version"]) is not int or not -1 <= snap["conditions_version"] <= data["conditions_version"] or snap["snapshot_id"] != f"hx-s{i}" or type(snap["snapshot_version"]) is not int or snap["snapshot_version"] != 1 or snap["data_state"] != "frozen" or snap["origin"] != "user_entered":
                     raise ValueError()
                 check_conditions(snap["conditions"])
+            answers.validate_saved(data)
         else:
+            if doc["module_data_version"] != 1:
+                raise ValueError()
             if set(data) != {"selection"}:
                 raise ValueError()
             selection = data["selection"]
@@ -165,7 +180,7 @@ class Application:
             return self._write(args.get("document"), args.get("target"))
         if op == "storage.read":
             return self._read(args.get("target"))
-        if op in ("session.state", "session.actions", "session.command", "session.save"):
+        if op in ("session.state", "session.actions", "session.command", "session.save", "answer.put", "answer.check"):
             session = self._session(args)
             mod = MODULES[session["module_id"]]
             if op == "session.state":
@@ -178,18 +193,28 @@ class Application:
                         reason = "Модель не утверждена."
                     elif action == "capture_snapshot" and session["state"]["conditions"] is None:
                         reason = "Сначала задайте условия."
-                    elif action == "show_fixture" and not session["state"]["snapshots"]:
-                        reason = "Сначала зафиксируйте снимок."
+                    elif action == "show_fixture" and not any(fixture_matches(s) for s in session["state"]["snapshots"]):
+                        reason = "Нет снимка с условиями R04."
                     actions.append({"action": action, "available": reason is None, **({"reason": reason} if reason else {})})
                 return {"revision": session["revision"], "actions": actions}
             self._revision(args, session)
             if op == "session.save":
-                return {"saved_revision": session["revision"], "document": {"format": "food-processes-session", "format_version": 1, "module_id": session["module_id"], "module_version": "0.1", "session_id": args["session_id"], "revision": session["revision"], "module_data_version": 1, "module_data": deepcopy(session["state"])}}
+                return {"saved_revision": session["revision"], "document": {"format": "food-processes-session", "format_version": 1, "module_id": session["module_id"], "module_version": "0.1", "session_id": args["session_id"], "revision": session["revision"], "module_data_version": 2 if mod is Heat else 1, "module_data": deepcopy(session["state"])}}
+            if op in ("answer.put", "answer.check"):
+                if mod is not Heat:
+                    fail("answer.unsupported", "availability", "Для этого модуля проверка ответов пока недоступна.")
+                new_state = deepcopy(session["state"])
+                answer = answers.put(new_state, args) if op == "answer.put" else answers.check(new_state, args)
+                session["state"] = new_state
+                session["revision"] += 1
+                return {"revision": session["revision"], "answer": answer}
             action, params = args.get("action"), args.get("params")
             if not isinstance(action, str) or not isinstance(params, dict):
                 fail("input.invalid_command", "input", "Укажите команду и объект параметров.")
             new_state = deepcopy(session["state"])
             result = mod.command(new_state, action, params)
+            if mod is Heat and action == "show_fixture":
+                return {"revision": session["revision"], **result}
             session["state"] = new_state
             session["revision"] += 1
             return {"revision": session["revision"], **result}

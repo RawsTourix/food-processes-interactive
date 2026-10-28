@@ -64,6 +64,20 @@ print(result["data"]["session_id"])
 
 `session.save` формирует документ, а `storage.write` записывает его; по умолчанию файлы сохраняются в каталоге пользователя вне проекта и EXE. Запрос принимает только простое имя вида `session.json`, а не путь. Для тестов доверенный вызывающий код может передать `Application(storage_dir=...)` или `--storage-dir`; это настройка запуска, не параметр недоверенного JSON-запроса. Экспорт отчётов и автоматическое сохранение пока не реализованы.
 
+Самостоятельный ответ можно ввести и проверить в отдельном **демонстрационном** задании. Следующий пример запускается в новом процессе CLI:
+
+```powershell
+@'
+{"api_version":"0.1","request_id":"1","op":"session.create","args":{"module_id":"heat-exchanger"}}
+{"api_version":"0.1","request_id":"2","op":"session.command","args":{"session_id":"s1","expected_revision":0,"action":"set_conditions","params":{"flow":"counter","hot_in":{"value":80,"unit":"degC"},"cold_in":{"value":20,"unit":"degC"},"hot_capacity":{"value":1000,"unit":"W/K"},"cold_capacity":{"value":1000,"unit":"W/K"},"UA":{"value":1000,"unit":"W/K"}}}}
+{"api_version":"0.1","request_id":"3","op":"session.command","args":{"session_id":"s1","expected_revision":1,"action":"capture_snapshot","params":{}}}
+{"api_version":"0.1","request_id":"4","op":"answer.put","args":{"session_id":"s1","expected_revision":2,"task_id":"demo.no_reference","context_ref":{"snapshot_id":"hx-s1","snapshot_version":1},"value":{"kind":"quantity","quantity_id":"demo_power","value":10,"unit":"W"}}}
+{"api_version":"0.1","request_id":"5","op":"answer.check","args":{"session_id":"s1","expected_revision":3,"answer_id":"answer-1"}}
+'@ | .\.venv\Scripts\python -m food_processes
+```
+
+В проверенном запуске последняя операция вернула `not_checked`: для примера не задан эталон. Задание `demo.power` демонстрирует сравнение с условным эталоном и допуском, но не является согласованной лабораторной работой. История проверок сохраняет версию ответа и снимка. Эталон не раскрывается обычными ответами API, но локальный офлайн-код не может гарантировать его секретность от пользователя. Подробности и ограничения — в [отчёте Д2а](docs/design/headless-d2a.md).
+
 ## Документация
 
 - [Техническое задание — черновик v0.3](docs/SPEC-DRAFT.md)

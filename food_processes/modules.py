@@ -11,6 +11,7 @@ class Problem(Exception):
 
 MATERIALS = {
     "hx.fixture": {"material_id": "hx.fixture", "title": "Условный пример R04", "text": "Результат является фиксированным учебным примером, а не измерением установки.", "source": "docs/design/heat-exchanger-reference-cases.md#эталонные-случаи"},
+    "demo.answer": {"material_id": "demo.answer", "title": "Демонстрационное задание", "text": "Введите условную мощность в W или kW. Проверка демонстрирует механизм ответов и не является физическим расчётом или заданием, согласованным преподавателем.", "source": "docs/design/headless-d2a.md"},
     "air.region": {"material_id": "air.region", "title": "Качественная область", "text": "Это условная область схемы без физических координат и свойств.", "source": "docs/design/laboratory-portfolio.md"},
 }
 
@@ -51,13 +52,18 @@ def quantity(params, key, kind):
     return {"value": normalized, "unit": "degC" if kind == "temperature" else "W/K", "entered": {"value": value, "unit": unit}}
 
 
+def fixture_matches(snapshot):
+    c = snapshot["conditions"]
+    return c["flow"] == "counter" and all(c[k]["value"] == v for k, v in {"hot_in": 80, "cold_in": 20, "hot_capacity": 1000, "cold_capacity": 1000, "UA": 1000}.items())
+
+
 class Heat:
     info = {"module_id": "heat-exchanger", "title": "Теплообменник", "module_version": "0.1", "interaction_types": ["calculation"], "models": [{"capability": "r04_fixture", "availability": "available", "basis": "учебная фикстура R04"}, {"capability": "stand_readings", "availability": "unavailable", "basis": "модель установки не утверждена"}]}
     actions = ["set_conditions", "save_draft", "capture_snapshot", "show_fixture", "get_stand_readings"]
 
     @staticmethod
     def initial():
-        return {"conditions": None, "drafts": {}, "snapshots": []}
+        return {"conditions": None, "drafts": {}, "snapshots": [], "conditions_version": 0, "answers": []}
 
     @staticmethod
     def command(state, action, params):
@@ -79,20 +85,21 @@ class Heat:
             for key in ("hot_capacity", "cold_capacity", "UA"):
                 conditions[key] = quantity(params, key, "capacity")
             state["conditions"] = conditions
+            state["conditions_version"] += 1
+            for answer in state["answers"]:
+                answer["data_state"] = "stale"
             return {"conditions": deepcopy(conditions)}
         if action == "capture_snapshot":
             if state["conditions"] is None:
                 fail("input.missing_conditions", "input", "Сначала задайте условия.")
-            snapshot = {"snapshot_id": f"hx-s{len(state['snapshots']) + 1}", "snapshot_version": 1, "data_state": "frozen", "origin": "user_entered", "conditions": deepcopy(state["conditions"])}
+            snapshot = {"snapshot_id": f"hx-s{len(state['snapshots']) + 1}", "snapshot_version": 1, "data_state": "frozen", "origin": "user_entered", "conditions_version": state["conditions_version"], "conditions": deepcopy(state["conditions"])}
             state["snapshots"].append(snapshot)
             return {"snapshot": deepcopy(snapshot)}
         if action == "show_fixture":
             snapshot = next((s for s in state["snapshots"] if s["snapshot_id"] == params.get("snapshot_id")), None)
             if snapshot is None:
                 fail("input.snapshot_not_found", "input", "Снимок не найден.", field="params.snapshot_id")
-            c = snapshot["conditions"]
-            matches = c["flow"] == "counter" and all(c[k]["value"] == v for k, v in {"hot_in": 80, "cold_in": 20, "hot_capacity": 1000, "cold_capacity": 1000, "UA": 1000}.items())
-            if not matches:
+            if not fixture_matches(snapshot):
                 fail("fixture.no_match", "availability", "Фикстура R04 доступна только для соответствующих условий; расчёт не реализован.")
             return {"fixture": {"kind": "demonstration_fixture", "source_id": "hx-r04", "context_ref": {"snapshot_id": snapshot["snapshot_id"]}, "message": "Открытая учебная фикстура R04; это не расчёт и не показания установки.", "values": {"heat_rate": {"value": 30000, "unit": "W"}, "hot_out": {"value": 50, "unit": "degC"}, "cold_out": {"value": 50, "unit": "degC"}}}}
         fail("action.unknown", "input", "Неизвестная команда.", field="action")

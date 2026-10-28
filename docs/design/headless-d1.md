@@ -2,6 +2,8 @@
 
 **Дата:** 28.10.2026. Код — `food_processes/`, проверки — `tests/test_headless.py`. Это исследовательский срез API, не полноценная лабораторная, модель теплообменника или психрометрия. R04 — открытая фиксированная учебная демонстрация из [эталонов](heat-exchanger-reference-cases.md); ни скрытых ответов заданий, ни системы их проверки в срезе нет.
 
+**Актуализация:** в Д2а добавлены ответы и проверка, а также изменена семантика чтения фикстуры; текущие детали — в [отчёте Д2а](headless-d2a.md). Ниже сохранён исторический отчёт Д1.
+
 ## Работает
 
 `Application.request` принимает конверт Д0 `api_version`, `request_id`, `op`, `args` и возвращает `outcome`, `data`, `diagnostics`. Тот же диспетчер вызывается CLI `python -m food_processes` для последовательности JSON Lines. Операции: `module.info`, `session.create`, `session.state`, `session.actions`, `session.command`, `material.get`, `session.save`, `storage.write`, `storage.read`, `session.restore`. Справка собственная, по ID `hx.fixture` и `air.region`.

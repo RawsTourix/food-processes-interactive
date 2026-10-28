@@ -58,14 +58,14 @@ def test_heat_fixture_snapshots_and_no_real_model(tmp_path):
     assert fixture["values"]["hot_out"]["value"] == fixture["values"]["cold_out"]["value"] == 50
     changed = conditions()
     changed["hot_in"]["value"] = 81
-    command(app, sid, 3, "set_conditions", **changed)
+    command(app, sid, 2, "set_conditions", **changed)
     state = ok(app, "session.state", session_id=sid)
     assert state["state"]["snapshots"][0] == first
     assert state["state"]["conditions"]["hot_in"]["value"] == 81
-    second = command(app, sid, 4, "capture_snapshot")["snapshot"]
-    error(app, "fixture.no_match", "session.command", session_id=sid, expected_revision=5, action="show_fixture", params={"snapshot_id": second["snapshot_id"]})
-    error(app, "model.stand_unavailable", "session.command", session_id=sid, expected_revision=5, action="get_stand_readings", params={})
-    assert ok(app, "session.state", session_id=sid)["revision"] == 5
+    second = command(app, sid, 3, "capture_snapshot")["snapshot"]
+    error(app, "fixture.no_match", "session.command", session_id=sid, expected_revision=4, action="show_fixture", params={"snapshot_id": second["snapshot_id"]})
+    error(app, "model.stand_unavailable", "session.command", session_id=sid, expected_revision=4, action="get_stand_readings", params={})
+    assert ok(app, "session.state", session_id=sid)["revision"] == 4
 
 
 def test_air_is_qualitative_and_has_material(tmp_path):
