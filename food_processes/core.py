@@ -5,10 +5,10 @@ import math
 import os
 from pathlib import Path
 import re
-import tempfile
+import uuid
 
 from .modules import Air, Heat, MATERIALS, MODULES, Problem, fail, fixture_matches
-from . import answers
+from . import answers, storage
 
 
 VERSION = "0.1"
@@ -34,7 +34,7 @@ def validate_document(doc):
         fail("document.invalid", "compatibility", "Формат документа повреждён.")
     if doc["format"] != "food-processes-session" or type(doc["format_version"]) is not int or doc["format_version"] != 1 or type(doc["module_data_version"]) is not int or doc["module_data_version"] not in (1, 2) or doc["module_version"] != "0.1":
         fail("document.unsupported", "compatibility", "Версия документа не поддерживается.")
-    if not isinstance(doc["module_id"], str) or doc["module_id"] not in MODULES or not isinstance(doc["session_id"], str) or not re.fullmatch(r"s[1-9][0-9]*", doc["session_id"]) or type(doc["revision"]) is not int or doc["revision"] < 0:
+    if not isinstance(doc["module_id"], str) or doc["module_id"] not in MODULES or not isinstance(doc["session_id"], str) or not re.fullmatch(r"(?:s[1-9][0-9]*|s-[0-9a-f]{32})", doc["session_id"]) or type(doc["revision"]) is not int or doc["revision"] < 0:
         fail("document.invalid", "compatibility", "Идентификатор модуля, сеанса или ревизия некорректны.")
     doc = deepcopy(doc)
     data = doc["module_data"]
@@ -93,10 +93,9 @@ class Application:
     def __init__(self, storage_dir=None):
         self.storage_dir = Path(storage_dir) if storage_dir is not None else default_storage()
         self.sessions = {}
-        self.counter = 0
 
     def _target(self, target):
-        if not isinstance(target, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}\.json", target, flags=re.ASCII):
+        if not isinstance(target, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}\.json", target, flags=re.ASCII) or re.fullmatch(r"(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])\.JSON", target.upper()):
             fail("storage.invalid_target", "storage", "Укажите имя файла JSON без пути.", field="target")
         root = self.storage_dir.resolve()
         path = root / target
@@ -104,37 +103,20 @@ class Application:
             fail("storage.invalid_target", "storage", "Символическая ссылка вместо файла не поддерживается.", field="target")
         return root, path
 
-    def _write(self, document, target):
+    def _write(self, document, target, expected):
         doc = validate_document(document)
         root, path = self._target(target)
-        temp = None
         try:
-            root.mkdir(parents=True, exist_ok=True)
-            with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=root, prefix=".session-", suffix=".tmp", delete=False) as f:
-                temp = Path(f.name)
-                json.dump(doc, f, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(temp, path)
-            temp = None
+            return storage.write_file(root, path, doc, expected, validate_document)
         except OSError:
-            fail("storage.write_failed", "storage", "Не удалось сохранить файл; повторите запись.")
-        finally:
-            if temp is not None:
-                try:
-                    temp.unlink(missing_ok=True)
-                except OSError:
-                    pass
-        return {"target": target, "saved_revision": doc["revision"]}
+            fail("storage.write_failed", "storage", "Не удалось подтвердить запись. Прочитайте файл перед повторной попыткой.")
 
     def _read(self, target):
-        _, path = self._target(target)
+        root, path = self._target(target)
         try:
-            with path.open("r", encoding="utf-8") as f:
-                doc = json.load(f, parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
-        except (OSError, ValueError, UnicodeError):
-            fail("storage.read_failed", "storage", "Не удалось прочитать корректный JSON-файл.")
-        return {"document": validate_document(doc)}
+            return storage.read_file(root, path, validate_document)
+        except OSError:
+            fail("storage.read_failed", "storage", "Не удалось прочитать файл.")
 
     def _session(self, args):
         sid = args.get("session_id")
@@ -164,8 +146,9 @@ class Application:
             mid = args.get("module_id")
             if not isinstance(mid, str) or mid not in MODULES:
                 fail("module.not_found", "input", "Учебный модуль не найден.")
-            self.counter += 1
-            sid = f"s{self.counter}"
+            sid = "s-" + uuid.uuid4().hex
+            while sid in self.sessions:
+                sid = "s-" + uuid.uuid4().hex
             self.sessions[sid] = {"module_id": mid, "revision": 0, "state": MODULES[mid].initial()}
             return {"session_id": sid, "revision": 0, "state": deepcopy(self.sessions[sid]["state"]), "models": deepcopy(MODULES[mid].info["models"])}
         if op == "session.restore":
@@ -174,10 +157,11 @@ class Application:
             if sid in self.sessions:
                 fail("session.already_exists", "conflict", "Сеанс уже открыт; восстановление не выполнено.")
             self.sessions[sid] = {"module_id": doc["module_id"], "revision": doc["revision"], "state": doc["module_data"]}
-            self.counter = max(self.counter, int(sid[1:]))
             return {"session_id": sid, "revision": doc["revision"], "state": deepcopy(doc["module_data"]), "models": deepcopy(MODULES[doc["module_id"]].info["models"])}
         if op == "storage.write":
-            return self._write(args.get("document"), args.get("target"))
+            if "expected_generation" not in args:
+                fail("storage.generation_required", "input", "Укажите ожидаемый токен поколения или null для нового файла.", field="expected_generation")
+            return self._write(args.get("document"), args.get("target"), args["expected_generation"])
         if op == "storage.read":
             return self._read(args.get("target"))
         if op in ("session.state", "session.actions", "session.command", "session.save", "answer.put", "answer.check"):

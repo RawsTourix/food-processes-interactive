@@ -126,7 +126,7 @@ def test_roundtrip_and_incompatible_restore(tmp_path, module):
         command(app, sid, 0, "select_region", region_id="schematic-area-a", point_id="p1")
         rev = 1
     doc = save(app, sid, rev)
-    ok(app, "storage.write", document=doc, target="session.json")
+    first_write = ok(app, "storage.write", document=doc, target="session.json", expected_generation=None)
     read = ok(app, "storage.read", target="session.json")["document"]
     assert read == doc
     restored = Application(tmp_path)
@@ -143,14 +143,14 @@ def test_failed_write_preserves_old_and_bad_read_keeps_session(tmp_path, monkeyp
     sid = new(app, "humid-air")
     command(app, sid, 0, "select_region", region_id="schematic-area-a", point_id="p1")
     doc = save(app, sid, 1)
-    ok(app, "storage.write", document=doc, target="session.json")
+    first_write = ok(app, "storage.write", document=doc, target="session.json", expected_generation=None)
     old = (tmp_path / "session.json").read_bytes()
     command(app, sid, 1, "select_region", region_id="schematic-area-a", point_id="p2")
     new_doc = save(app, sid, 2)
     def broken(*args):
         raise OSError("simulated failure")
     monkeypatch.setattr(os, "replace", broken)
-    error(app, "storage.write_failed", "storage.write", document=new_doc, target="session.json")
+    error(app, "storage.write_failed", "storage.write", document=new_doc, target="session.json", expected_generation=first_write["generation"])
     assert (tmp_path / "session.json").read_bytes() == old
     assert not list(tmp_path.glob("*.tmp"))
     (tmp_path / "bad.json").write_text("{broken", encoding="utf-8")
@@ -158,11 +158,11 @@ def test_failed_write_preserves_old_and_bad_read_keeps_session(tmp_path, monkeyp
     assert ok(app, "session.state", session_id=sid)["state"]["selection"]["point_id"] == "p2"
 
 
-@pytest.mark.parametrize("target", ["../escape.json", "C:/escape.json", "/tmp/escape.json", "a/b.json", "file.txt", "..\\escape.json"])
+@pytest.mark.parametrize("target", ["../escape.json", "C:/escape.json", "/tmp/escape.json", "a/b.json", "file.txt", "..\\escape.json", "CON.json", "lpt1.json", "nul.json"])
 def test_storage_rejects_paths(tmp_path, target):
     app = Application(tmp_path)
     sid = new(app, "humid-air")
-    error(app, "storage.invalid_target", "storage.write", document=save(app, sid, 0), target=target)
+    error(app, "storage.invalid_target", "storage.write", document=save(app, sid, 0), target=target, expected_generation=None)
 
 
 def test_nonfinite_never_enters_state_or_serialization(tmp_path):
@@ -175,21 +175,17 @@ def test_nonfinite_never_enters_state_or_serialization(tmp_path):
     doc = save(app, sid, 0)
     json.dumps(doc, allow_nan=False)
     doc["module_data"]["drafts"]["x"] = float("nan")
-    error(app, "input.nonfinite", "storage.write", document=doc, target="invalid.json")
+    error(app, "input.nonfinite", "storage.write", document=doc, target="invalid.json", expected_generation=None)
     assert not (tmp_path / "invalid.json").exists()
 
 
 def test_python_cli_parity_two_sessions(tmp_path):
     requests = [req("session.create", module_id="heat-exchanger"), req("session.command", session_id="s1", expected_revision=0, action="set_conditions", params=conditions()), req("session.command", session_id="s1", expected_revision=1, action="capture_snapshot", params={}), req("session.command", session_id="s1", expected_revision=2, action="show_fixture", params={"snapshot_id": "hx-s1"}), req("session.create", module_id="humid-air"), req("session.command", session_id="s2", expected_revision=0, action="select_region", params={"point_id": "p1", "region_id": "schematic-area-a"}), req("session.command", session_id="s2", expected_revision=1, action="get_properties", params={}), req("session.save", session_id="s2", expected_revision=1)]
-    app = Application(tmp_path)
-    python_results = [app.request(r) for r in requests]
-    text = "\n".join(json.dumps(r, ensure_ascii=False) for r in requests) + "\n"
-    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
-    process = subprocess.run([sys.executable, "-m", "food_processes", "--storage-dir", str(tmp_path)], input=text, encoding="utf-8", capture_output=True, env=env, check=True)
-    cli_results = [json.loads(line) for line in process.stdout.splitlines()]
-    assert cli_results == python_results
+    from tests.cli_helpers import compare_requests
+    cli_results = compare_requests(tmp_path, requests)
     assert all(r["outcome"] == "ok" for r in cli_results[:6])
     assert cli_results[6]["diagnostics"][0]["code"] == "model.psychrometrics_unavailable"
+
 
 
 def test_cli_rejects_nonstandard_json_and_continues(tmp_path):
@@ -228,7 +224,7 @@ def test_target_symlink_rejected_when_available(tmp_path):
         pytest.skip("Символические ссылки недоступны в этой среде")
     app = Application(tmp_path)
     sid = new(app, "humid-air")
-    error(app, "storage.invalid_target", "storage.write", document=save(app, sid, 0), target="link.json")
+    error(app, "storage.invalid_target", "storage.write", document=save(app, sid, 0), target="link.json", expected_generation=None)
     assert outside.read_text(encoding="utf-8") == "outside"
 
 

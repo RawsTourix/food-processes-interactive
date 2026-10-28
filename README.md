@@ -40,49 +40,43 @@ python -m venv .venv
 .\.venv\Scripts\python -m food_processes
 ```
 
-CLI читает **JSON Lines**: одна строка запроса — одна строка ответа; сеансы остаются в памяти до завершения процесса. Пример работы с обоими модулями:
+CLI читает **JSON Lines**: одна строка запроса — одна строка ответа; сеансы остаются в памяти до завершения процесса. В интерактивном CLI сначала отправьте запрос:
 
-```powershell
-@'
-{"api_version":"0.1","request_id":"1","op":"session.create","args":{"module_id":"heat-exchanger"}}
-{"api_version":"0.1","request_id":"2","op":"session.create","args":{"module_id":"humid-air"}}
-{"api_version":"0.1","request_id":"3","op":"session.command","args":{"session_id":"s2","expected_revision":0,"action":"select_region","params":{"point_id":"p1","region_id":"schematic-area-a"}}}
-{"api_version":"0.1","request_id":"4","op":"session.command","args":{"session_id":"s2","expected_revision":1,"action":"get_properties","params":{}}}
-'@ | .\.venv\Scripts\python -m food_processes
+```json
+{"api_version":"0.1","request_id":"1","op":"session.create","args":{"module_id":"humid-air"}}
 ```
 
-При проверке созданы сеансы `s1` и `s2`; выбор `p1` вернул `representation: "qualitative"`, ревизию 1 и ссылку на справку. Запрос физических свойств вернул `model.psychrometrics_unavailable`. Это не психрометрический расчёт. В теплообменнике доступна только открытая фикстура R04 с точным совпадением условий, а не расчёт или показания стенда. Полный пример, границы и результаты тестов — [отчёт Д1](docs/design/headless-d1.md).
+Скопируйте возвращённый `session_id` вида `s-…` в следующий запрос (значение `<ID>` в примере заменяется пользователем):
 
-Из Python используется тот же диспетчер:
+```json
+{"api_version":"0.1","request_id":"2","op":"session.command","args":{"session_id":"<ID>","expected_revision":0,"action":"select_region","params":{"point_id":"p1","region_id":"schematic-area-a"}}}
+```
+
+Ответ содержит качественный выбор, а запрос `get_properties` возвращает `model.psychrometrics_unavailable`. Нет психрометрического расчёта. Теплообменник содержит открытую фикстуру R04, а не модель или показания стенда. Самостоятельные ответы для технического задания и пример последовательности — в [отчёте Д2а](docs/design/headless-d2a.md); в его историческом примере старые `s1` следует заменить фактическим ID сеанса.
+
+Из Python используется тот же диспетчер. Пример создаёт `example.json` в пользовательском каталоге данных:
 
 ```python
 from food_processes import Application
 app = Application()
-result = app.request({"api_version": "0.1", "request_id": "1", "op": "session.create", "args": {"module_id": "humid-air"}})
-print(result["data"]["session_id"])
+def call(op, **args):
+    response = app.request({"api_version": "0.1", "request_id": "1", "op": op, "args": args})
+    if response["outcome"] != "ok":
+        raise RuntimeError(response["diagnostics"])
+    return response["data"]
+sid = call("session.create", module_id="humid-air")["session_id"]
+doc = call("session.save", session_id=sid, expected_revision=0)["document"]
+written = call("storage.write", target="example.json", document=doc, expected_generation=None)
+print(written["generation"])
 ```
 
-`session.save` формирует документ, а `storage.write` записывает его; по умолчанию файлы сохраняются в каталоге пользователя вне проекта и EXE. Запрос принимает только простое имя вида `session.json`, а не путь. Для тестов доверенный вызывающий код может передать `Application(storage_dir=...)` или `--storage-dir`; это настройка запуска, не параметр недоверенного JSON-запроса. Экспорт отчётов и автоматическое сохранение пока не реализованы.
-
-Самостоятельный ответ можно ввести и проверить в отдельном **демонстрационном** задании. Следующий пример запускается в новом процессе CLI:
-
-```powershell
-@'
-{"api_version":"0.1","request_id":"1","op":"session.create","args":{"module_id":"heat-exchanger"}}
-{"api_version":"0.1","request_id":"2","op":"session.command","args":{"session_id":"s1","expected_revision":0,"action":"set_conditions","params":{"flow":"counter","hot_in":{"value":80,"unit":"degC"},"cold_in":{"value":20,"unit":"degC"},"hot_capacity":{"value":1000,"unit":"W/K"},"cold_capacity":{"value":1000,"unit":"W/K"},"UA":{"value":1000,"unit":"W/K"}}}}
-{"api_version":"0.1","request_id":"3","op":"session.command","args":{"session_id":"s1","expected_revision":1,"action":"capture_snapshot","params":{}}}
-{"api_version":"0.1","request_id":"4","op":"answer.put","args":{"session_id":"s1","expected_revision":2,"task_id":"demo.no_reference","context_ref":{"snapshot_id":"hx-s1","snapshot_version":1},"value":{"kind":"quantity","quantity_id":"demo_power","value":10,"unit":"W"}}}
-{"api_version":"0.1","request_id":"5","op":"answer.check","args":{"session_id":"s1","expected_revision":3,"answer_id":"answer-1"}}
-'@ | .\.venv\Scripts\python -m food_processes
-```
-
-В проверенном запуске последняя операция вернула `not_checked`: для примера не задан эталон. Задание `demo.power` демонстрирует сравнение с условным эталоном и допуском, но не является согласованной лабораторной работой. История проверок сохраняет версию ответа и снимка. Эталон не раскрывается обычными ответами API, но локальный офлайн-код не может гарантировать его секретность от пользователя. Подробности и ограничения — в [отчёте Д2а](docs/design/headless-d2a.md).
+`session.save` формирует документ; `storage.write` требует `expected_generation`: `null`/`None` только для нового файла. Для изменения существующего файла получите токен через `storage.read` и передайте его при записи. После конфликта нужно прочитать файл и явно решить, как сохранить данные; автоматической перезаписи нет. При повторном запуске приведённого примера с существующим файлом ожидается конфликт. Файлы хранятся вне проекта и EXE; JSON-запрос принимает только простое имя вида `session.json`. `Application(storage_dir=...)` и `--storage-dir` — доверенные настройки запуска. Экспорт отчётов и автосохранение пока не реализованы. Подробнее — [отчёт Д2б](docs/design/headless-d2b.md).
 
 ## Документация
 
 - [Техническое задание — черновик v0.3](docs/SPEC-DRAFT.md)
 - [Архитектура общего практикума](docs/design/application-architecture.md)
-- [Контракт API](docs/design/application-api-contract.md) и [реализация Д1](docs/design/headless-d1.md)
+- [Контракт API](docs/design/application-api-contract.md), [реализация Д1](docs/design/headless-d1.md) и [хранение Д2б](docs/design/headless-d2b.md)
 - [Портфель лабораторных и интерактивностей](docs/design/laboratory-portfolio.md)
 - [Открытые решения и вопросы](docs/OPEN-QUESTIONS.md)
 - [План работы с Codex](docs/CODEX-PLAN.md)
