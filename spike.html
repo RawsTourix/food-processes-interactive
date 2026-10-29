@@ -1,0 +1,121 @@
+﻿<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Food Processes Interactive</title>
+<style>
+:root { font: 16px/1.45 "Segoe UI", sans-serif; color: #19334a; background: #edf2f5; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; }
+header { background: #173b50; color: white; padding: 16px 24px; }
+h1 { margin: 0; font-size: 1.3rem; } header p { margin: 3px 0 0; color: #cbdce5; font-size: .9rem; }
+main { max-width: 1150px; margin: auto; padding: 20px; }
+nav, .controls { display: flex; flex-wrap: wrap; gap: 8px; }
+button { background: white; border: 1px solid #a8bdca; border-radius: 6px; color: #204257; padding: 9px 13px; cursor: pointer; font: inherit; }
+button:hover:not(:disabled) { border-color: #306e82; background: #f1f9fa; }
+button.active { background: #1f6476; color: white; border-color: #1f6476; }
+button:disabled { opacity: .55; cursor: default; }
+.grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(260px, 1fr); gap: 16px; margin-top: 16px; }
+.card { background: white; border: 1px solid #d8e3e9; border-radius: 9px; padding: 18px; min-width: 0; }
+h2 { margin: 0 0 8px; font-size: 1.1rem; } p { margin: 8px 0; }
+.note { color: #536c7a; font-size: .9rem; }
+svg { width: 100%; height: auto; max-height: 290px; display: block; margin: 12px auto; }
+#air-area { cursor: pointer; } #air-area:focus { outline: none; stroke: #16485e; stroke-width: 5; }
+#point { visibility: hidden; } #point.selected { visibility: visible; }
+.controls { margin: 14px 0; }
+#message { padding: 10px; background: #edf5f5; border-radius: 5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+#details { font: .8rem/1.4 Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 260px; overflow: auto; }
+@media(max-width: 780px) { .grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header><h1>Food Processes Interactive</h1><p>Технический прототип · без физической модели установки</p></header>
+<main>
+<nav aria-label="Учебные модули"><button id="tab-heat" class="active">Теплообменник</button><button id="tab-air">Влажный воздух</button></nav>
+<div class="grid"><section class="card"><h2 id="module-title">Теплообменник</h2><p id="description" class="note">Условная схема потоков, не изображение действующего стенда.</p>
+<svg id="heat-svg" viewBox="0 0 600 200" role="img" aria-label="Условная схема двух потоков">
+<defs><marker id="arrow-hot" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8z" fill="#c46a45"/></marker><marker id="arrow-cold" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8z" fill="#348ca2"/></marker></defs>
+<rect x="50" y="45" width="500" height="110" rx="20" fill="#f0f5f5" stroke="#afc5cf" stroke-width="3"/><path d="M90 82 H510" fill="none" stroke="#c46a45" stroke-width="10" marker-end="url(#arrow-hot)"/><path id="cold-flow" d="M510 120 H90" fill="none" stroke="#348ca2" stroke-width="10" marker-end="url(#arrow-cold)"/><text x="75" y="30" fill="#425f70">Контур 1</text><text x="430" y="180" fill="#425f70">Контур 2</text></svg>
+<svg id="air-svg" viewBox="0 0 600 200" role="img" aria-label="Условная область, не диаграмма свойств" hidden><rect id="air-area" tabindex="0" role="button" aria-label="Выбрать качественную точку" x="55" y="20" width="490" height="150" rx="18" fill="#e4f4f3" stroke="#72aaa9" stroke-width="3"/><text x="90" y="85" fill="#2c686b">Выбрать качественную точку</text><text x="90" y="110" fill="#536c7a">Область условная, координаты не заданы</text><circle id="point" cx="420" cy="95" r="10" fill="#1c7377"/></svg>
+<div id="heat-controls" class="controls"><button id="parallel">Прямоток</button><button id="counter">Противоток</button><button id="snapshot">Зафиксировать условия</button><button id="fixture">Открытая фикстура R04</button><button id="stand">Показания стенда</button></div>
+<div id="air-controls" class="controls" hidden><button id="select">Выбрать точку</button><button id="help">Справка</button><button id="properties">Свойства воздуха</button></div>
+<div class="controls"><button id="save">Сохранить сеанс</button><button id="restore">Восстановить сеанс</button></div>
+<p class="note">Сохранения — в пользовательском каталоге. При конфликте чужие данные не перезаписываются.</p></section>
+<section class="card"><h2>Состояние и сообщения</h2><div id="message" role="status">Ожидание Python-моста…</div><pre id="details"></pre></section></div></main>
+<script>
+(() => {
+  const ids = ["tab-heat", "tab-air", "parallel", "counter", "snapshot", "fixture", "stand", "select", "help", "properties", "save", "restore"];
+  const $ = id => document.getElementById(id);
+  const sessions = {"heat-exchanger": null, "humid-air": null};
+  const targets = {"heat-exchanger": "spike-heat.json", "humid-air": "spike-air.json"};
+  let moduleId = "heat-exchanger", seq = 0, ready = false, busy = false;
+  const message = text => { $("message").textContent = text; };
+  function enabled() { for (const id of ids) $(id).disabled = !ready || busy; $("air-area").setAttribute("aria-disabled", String(!ready || busy)); }
+  async function api(op, args) {
+    if (!window.pywebview || !window.pywebview.api) throw new Error("Python-мост недоступен.");
+    const result = await window.pywebview.api.request({api_version: "0.1", request_id: String(++seq), op, args});
+    $("details").textContent = JSON.stringify(result, null, 2);
+    if (!result || result.outcome !== "ok") throw new Error(result && result.diagnostics && result.diagnostics[0] ? result.diagnostics[0].message : "Не удалось выполнить запрос.");
+    return result.data;
+  }
+  async function perform(fn) {
+    if (!ready || busy) return;
+    busy = true; enabled();
+    try { await fn(); } catch (error) { message(error.message || "Ошибка связи с Python."); }
+    finally { busy = false; enabled(); }
+  }
+  async function ensureSession() {
+    if (!sessions[moduleId]) {
+      const data = await api("session.create", {module_id: moduleId});
+      sessions[moduleId] = {id: data.session_id, revision: data.revision, generation: null};
+    }
+    return sessions[moduleId];
+  }
+  function render(state) {
+    if (moduleId === "humid-air") $("point").classList.toggle("selected", Boolean(state.selection));
+    else if (state.conditions) $("cold-flow").setAttribute("d", state.conditions.flow === "parallel" ? "M90 120 H510" : "M510 120 H90");
+  }
+  async function loadState() {
+    const session = await ensureSession();
+    const data = await api("session.state", {session_id: session.id});
+    session.revision = data.revision; render(data.state);
+  }
+  async function command(action, params = {}) {
+    const session = await ensureSession();
+    const data = await api("session.command", {session_id: session.id, expected_revision: session.revision, action, params});
+    session.revision = data.revision;
+    await loadState(); return data;
+  }
+  function switchModule(id) {
+    moduleId = id; const heat = id === "heat-exchanger";
+    $("tab-heat").classList.toggle("active", heat); $("tab-air").classList.toggle("active", !heat);
+    $("heat-svg").hidden = !heat; $("heat-controls").hidden = !heat;
+    $("air-svg").hidden = heat; $("air-controls").hidden = heat;
+    $("module-title").textContent = heat ? "Теплообменник" : "Влажный воздух";
+    $("description").textContent = heat ? "Условная схема потоков, не изображение действующего стенда." : "Качественная область, не физически точная i–d-диаграмма.";
+    message("Модуль открыт.");
+  }
+  function conditions(flow) { return {flow, hot_in: {value:80,unit:"degC"}, cold_in:{value:20,unit:"degC"}, hot_capacity:{value:1000,unit:"W/K"}, cold_capacity:{value:1000,unit:"W/K"}, UA:{value:1000,unit:"W/K"}}; }
+  async function selectPoint() { const result = await command("select_region", {region_id:"schematic-area-a",point_id:"p1"}); message("Выбрана условная точка " + result.selection.point_id + ". Физические свойства не заданы."); }
+  $("tab-heat").onclick = () => perform(async () => { switchModule("heat-exchanger"); await loadState(); });
+  $("tab-air").onclick = () => perform(async () => { switchModule("humid-air"); await loadState(); });
+  for (const flow of ["parallel", "counter"]) $(flow).onclick = () => perform(async () => { await command("set_conditions", conditions(flow)); message("Выбраны условные параметры. Это не показания стенда."); });
+  $("snapshot").onclick = () => perform(async () => { const data = await command("capture_snapshot"); message("Снимок условий: " + data.snapshot.snapshot_id); });
+  $("fixture").onclick = () => perform(async () => { const s = await ensureSession(); const state = await api("session.state", {session_id:s.id}); const snapshots = state.state.snapshots; if (!snapshots.length) throw new Error("Сначала зафиксируйте условия противотока."); const data = await api("session.command", {session_id:s.id,expected_revision:s.revision,action:"show_fixture",params:{snapshot_id:snapshots[snapshots.length-1].snapshot_id}}); message("Условный учебный пример. Не является показанием реальной установки.\n" + JSON.stringify(data.fixture.values)); });
+  $("stand").onclick = () => perform(async () => { await command("get_stand_readings"); });
+  $("select").onclick = () => perform(selectPoint);
+  $("air-area").onclick = () => perform(selectPoint);
+  $("air-area").onkeydown = event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); perform(selectPoint); } };
+  $("help").onclick = () => perform(async () => { const data = await api("material.get", {material_id:"air.region"}); message(data.title + ": " + data.text); });
+  $("properties").onclick = () => perform(async () => { await command("get_properties"); });
+  $("save").onclick = () => perform(async () => { const s = await ensureSession(); const data = await api("session.save", {session_id:s.id,expected_revision:s.revision}); const saved = await api("storage.write", {target:targets[moduleId],document:data.document,expected_generation:s.generation}); s.generation = saved.generation; message("Сеанс сохранён: " + saved.target); });
+  $("restore").onclick = () => perform(async () => { const loaded = await api("storage.read", {target:targets[moduleId]}); const restored = await api("session.restore", {document:loaded.document}); sessions[moduleId] = {id:restored.session_id,revision:restored.revision,generation:loaded.generation}; render(restored.state); message("Сеанс восстановлен."); });
+  enabled();
+  window.addEventListener("pywebviewready", () => { ready = true; enabled(); perform(async () => { await loadState(); message("Python-мост готов. Модель стенда не подтверждена."); }); });
+  setTimeout(() => { if (!ready) message("Python-мост недоступен. Откройте прототип в pywebview."); }, 7000);
+})();
+</script>
+</body>
+</html>

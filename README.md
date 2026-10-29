@@ -72,11 +72,23 @@ print(written["generation"])
 
 `session.save` формирует документ; `storage.write` требует `expected_generation`: `null`/`None` только для нового файла. Для изменения существующего файла получите токен через `storage.read` и передайте его при записи. После конфликта нужно прочитать файл и явно решить, как сохранить данные; автоматической перезаписи нет. При повторном запуске приведённого примера с существующим файлом ожидается конфликт. Файлы хранятся вне проекта и EXE; JSON-запрос принимает только простое имя вида `session.json`. `Application(storage_dir=...)` и `--storage-dir` — доверенные настройки запуска. Экспорт отчётов и автосохранение пока не реализованы. Подробнее — [отчёт Д2б](docs/design/headless-d2b.md).
 
+## Технический Windows-прототип
+
+В отдельном виртуальном окружении установите зависимости и запустите прототип:
+
+```powershell
+.\.venv\Scripts\python -m pip install -r requirements-spike.txt
+.\.venv\Scripts\python spike_gui.py
+```
+
+Окно использует WebView2 Runtime и .NET Framework; до запуска проверяется их наличие. Схемы и открытая фикстура R04 учебные, физическая модель не реализована. Обычные сохранения располагаются в пользовательском каталоге, а не рядом с EXE. Команды сборки и проверенные ограничения — в [отчёте](docs/design/windows-gui-spike.md); ручная проверка окна и запуск на чистой Windows ещё не выполнены.
+
 ## Документация
 
 - [Техническое задание — черновик v0.3](docs/SPEC-DRAFT.md)
 - [Архитектура общего практикума](docs/design/application-architecture.md)
 - [Контракт API](docs/design/application-api-contract.md), [реализация Д1](docs/design/headless-d1.md) и [хранение Д2б](docs/design/headless-d2b.md)
+- [Windows-прототип и результаты сборки](docs/design/windows-gui-spike.md)
 - [Портфель лабораторных и интерактивностей](docs/design/laboratory-portfolio.md)
 - [Открытые решения и вопросы](docs/OPEN-QUESTIONS.md)
 - [План работы с Codex](docs/CODEX-PLAN.md)
